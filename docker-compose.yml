@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  converter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: react-to-templ-converter
+    ports:
+      - "8080:8080"  # Порт для веб-интерфейса
+    environment:
+      - PORT=8080
+      - PARSER_PORT=3001
+      - TZ=Europe/Moscow
+    volumes:
+#      - ./examples:/app/examples:ro  # Подключаем примеры для доступа только для чтения
+      - converted-data:/app/converted  # Том для сохранения сконвертированных файлов
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - converter-network
+
+  # Опционально: контейнер для Redis, если мы захотим использовать его для хранения состояний
+  # redis:
+  #   image: redis:alpine
+  #   container_name: converter-redis
+  #   volumes:
+  #     - redis-data:/data
+  #   networks:
+  #     - converter-network
+
+networks:
+  converter-network:
+    driver: bridge
+
+volumes:
+  converted-data:
+  # redis-data:  # Раскомментировать, если используется Redis
