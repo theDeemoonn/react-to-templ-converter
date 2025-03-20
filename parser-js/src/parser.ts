@@ -124,11 +124,18 @@ export function parseReactComponent(code: string): ReactComponent {
 
             // Поиск функциональных компонентов
             FunctionDeclaration(path) {
-                if (isReactComponent(path.node)) {
-                    // Найден функциональный компонент
-                    componentInfo.name = path.node.id.name;
-                    extractPropsFromFunction(path, componentInfo, sourceCode);
-                    extractJSXFromFunction(path, componentInfo, sourceCode);
+                // Сначала сохраняем имя компонента, если это функция с именем
+                if (path.node.id && path.node.id.name) {
+                    // Временно сохраняем имя функции
+                    const funcName = path.node.id.name;
+
+                    // Проверяем является ли это компонентом React
+                    if (isReactComponent(path.node)) {
+                        // Найден функциональный компонент
+                        componentInfo.name = funcName;
+                        extractPropsFromFunction(path, componentInfo, sourceCode);
+                        extractJSXFromFunction(path, componentInfo, sourceCode);
+                    }
                 }
             },
 
@@ -222,6 +229,9 @@ export function parseReactComponent(code: string): ReactComponent {
                 }
             }
         });
+
+        // Логирование результата для отладки
+        console.log("Результат парсинга:", JSON.stringify(componentInfo, null, 2));
 
         return componentInfo;
 
@@ -450,6 +460,7 @@ function extractJSXFromFunction(path: babel.NodePath, componentInfo: ReactCompon
 
     // Для стрелочных функций с неявным возвратом
     if (babel.types.isArrowFunctionExpression(node) && isJSX(node.body)) {
+        console.log("Найден JSX в стрелочной функции с неявным возвратом");
         componentInfo.jsx = transformJSX(node.body, sourceCode);
         return;
     }
@@ -461,11 +472,20 @@ function extractJSXFromFunction(path: babel.NodePath, componentInfo: ReactCompon
             ReturnStatement(returnPath) {
                 if (found) return;
                 if (returnPath.node.argument && isJSX(returnPath.node.argument)) {
+                    console.log("Найден JSX в return:", sourceCode.substring(
+                        returnPath.node.argument.start as number,
+                        returnPath.node.argument.end as number
+                    ));
                     componentInfo.jsx = transformJSX(returnPath.node.argument, sourceCode);
                     found = true;
                 }
             }
         }, { scopeToSkip: null } as any);
+
+        // Добавим дополнительный лог, если JSX не найден
+        if (!found) {
+            console.log("JSX не найден в функции", componentInfo.name);
+        }
     }
 }
 

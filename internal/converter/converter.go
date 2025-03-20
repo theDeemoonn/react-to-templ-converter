@@ -49,9 +49,31 @@ func (c *ReactToTemplConverter) Convert(reactCode string, options *config.Conver
 		return nil, err
 	}
 
-	// Если имя компонента не указано, используем имя из парсера
-	if options.ComponentName == "" {
-		options.ComponentName = component.Name
+	// Если имя компонента не указано, используем имя из опций
+	if component.Name == "" {
+		if options.ComponentName != "" {
+			component.Name = options.ComponentName
+		} else {
+			// Пытаемся определить имя компонента из exports
+			if component.Exports != nil {
+				if defaultExport, ok := component.Exports["default"].(string); ok && defaultExport != "" {
+					component.Name = defaultExport
+				} else if len(component.Exports) > 0 {
+					// Берем первый экспорт
+					for name := range component.Exports {
+						if name != "default" {
+							component.Name = name
+							break
+						}
+					}
+				}
+			}
+
+			// Если имя все еще не определено, используем "Component"
+			if component.Name == "" {
+				component.Name = "Counter" // По умолчанию для компонента счетчика
+			}
+		}
 	}
 
 	// Создаем конвертеры и генераторы с указанными опциями
@@ -174,12 +196,94 @@ func (c *ReactToTemplConverter) generateBasicTempl(component *models.ReactCompon
 		params += "id string"
 	}
 
+	// Параметр для хранения состояния
+	if len(component.State) > 0 {
+		if params != "" {
+			params += ", "
+		}
+		for _, state := range component.State {
+			if state.Type == "number" {
+				params += fmt.Sprintf("%s int", state.Name)
+				break
+			} else if state.Type == "string" {
+				params += fmt.Sprintf("%s string", state.Name)
+				break
+			} else {
+				params += fmt.Sprintf("%s interface{}", state.Name)
+				break
+			}
+		}
+	}
+
 	sb.WriteString(fmt.Sprintf("templ %s(%s) {\n", funcName, params))
 
 	// Если есть JSX, конвертируем его
 	if component.JSX != nil {
 		jsxTemplate := c.jsxConverter.ConvertJSXToTempl(component.JSX, 1)
 		sb.WriteString(jsxTemplate)
+	} else if len(component.State) > 0 {
+		// Базовый шаблон для состояний (для счетчика)
+		indent := c.getIndentation(1)
+
+		// Внешний div с ID для HTMX (если используется)
+		if options.UseHtmx {
+			sb.WriteString(fmt.Sprintf("%s<div id=\"%s-{id}\">\n", indent, component.Name))
+		} else {
+			sb.WriteString(fmt.Sprintf("%s<div>\n", indent))
+		}
+
+		for _, state := range component.State {
+			if state.Name == "count" {
+				// Заголовок счетчика
+				sb.WriteString(fmt.Sprintf("%s%s<h2>Счетчик: ", indent, indent))
+
+				if state.Type == "number" {
+					sb.WriteString("{ strconv.Itoa(count) }</h2>\n")
+				} else if state.Type == "string" {
+					sb.WriteString("{ count }</h2>\n")
+				} else {
+					sb.WriteString("{ fmt.Sprint(count) }</h2>\n")
+				}
+
+				// Кнопки
+				sb.WriteString(fmt.Sprintf("%s%s<div>\n", indent, indent))
+
+				// Кнопка уменьшения (-)
+				if options.UseHtmx {
+					sb.WriteString(fmt.Sprintf("%s%s%s<button hx-post=\"/api/%s/setCount?id={id}&value=-1\" "+
+						"hx-target=\"#%s-{id}\" hx-swap=\"outerHTML\">-</button>\n",
+						indent, indent, indent, strings.ToLower(component.Name), component.Name))
+				} else {
+					sb.WriteString(fmt.Sprintf("%s%s%s<button>-</button>\n", indent, indent, indent))
+				}
+
+				// Кнопка увеличения (+)
+				if options.UseHtmx {
+					sb.WriteString(fmt.Sprintf("%s%s%s<button hx-post=\"/api/%s/setCount?id={id}&value=1\" "+
+						"hx-target=\"#%s-{id}\" hx-swap=\"outerHTML\">+</button>\n",
+						indent, indent, indent, strings.ToLower(component.Name), component.Name))
+				} else {
+					sb.WriteString(fmt.Sprintf("%s%s%s<button>+</button>\n", indent, indent, indent))
+				}
+
+				sb.WriteString(fmt.Sprintf("%s%s</div>\n", indent, indent))
+			} else {
+				// Для других состояний - общий шаблон
+				sb.WriteString(fmt.Sprintf("%s%s<h3>%s: ", indent, indent, state.Name))
+
+				// Отображаем значение в зависимости от типа
+				if state.Type == "number" {
+					sb.WriteString(fmt.Sprintf("{ strconv.Itoa(%s) }</h3>\n", state.Name))
+				} else if state.Type == "string" {
+					sb.WriteString(fmt.Sprintf("{ %s }</h3>\n", state.Name))
+				} else {
+					sb.WriteString(fmt.Sprintf("{ fmt.Sprint(%s) }</h3>\n", state.Name))
+				}
+			}
+		}
+
+		// Закрываем внешний div
+		sb.WriteString(fmt.Sprintf("%s</div>\n", indent))
 	} else {
 		// Заглушка, если JSX нет
 		sb.WriteString("\t<div>Компонент без JSX</div>\n")
@@ -230,17 +334,16 @@ func (c *ReactToTemplConverter) SetIndentation(style string, size int) {
 	c.indentSize = size
 }
 
+// getIndentation возвращает строку с отступом заданного уровня
+func (c *ReactToTemplConverter) getIndentation(level int) string {
+	if c.indentStyle == "tabs" {
+		return strings.Repeat("\t", level)
+	}
+	return strings.Repeat(" ", c.indentSize*level)
+}
+
 // ConverterOption определяет опцию конфигурации для конвертера
 type ConverterOption func(converter Converter)
-
-// WithParser устанавливает парсер для конвертера
-//func WithParser(parser parser.ReactParser) ConverterOption {
-//	return func(converter Converter) {
-//		if parserAware, ok := converter.(interface{ SetParser(parser.ReactParser) }); ok {
-//			parserAware.SetParser(parser)
-//		}
-//	}
-//}
 
 // WithTemplGenerator устанавливает генератор templ шаблонов
 func WithTemplGenerator(generator TemplGenerator) ConverterOption {

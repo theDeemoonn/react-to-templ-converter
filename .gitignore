@@ -38,6 +38,8 @@ go.work.sum
 /node_modules
 /parser-js/node_modules
 /parser-js/dist
+/dist
+./parser-js/dist
 /.pnp
 .pnp.js
 

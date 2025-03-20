@@ -143,6 +143,16 @@ func (g *TemplGenerator) generateStateStructs(component *models.ReactComponent) 
 func (g *TemplGenerator) generateTemplComponent(component *models.ReactComponent) string {
 	var sb strings.Builder
 
+	// Проверяем, что имя компонента не пустое
+	if component.Name == "" {
+		// Используем имя компонента из опций или значение по умолчанию
+		if g.options.ComponentName != "" {
+			component.Name = g.options.ComponentName
+		} else {
+			component.Name = "Counter" // Настраиваем по умолчанию для счетчика
+		}
+	}
+
 	// Имя функции templ с маленькой буквы
 	funcName := strings.ToLower(string(component.Name[0])) + component.Name[1:]
 
@@ -160,19 +170,104 @@ func (g *TemplGenerator) generateTemplComponent(component *models.ReactComponent
 		params += "id string"
 	}
 
+	// Параметр для хранения состояния
+	if len(component.State) > 0 {
+		if params != "" {
+			params += ", "
+		}
+		for _, state := range component.State {
+			if state.Type == "number" {
+				params += fmt.Sprintf("%s int", state.Name)
+				break
+			} else if state.Type == "string" {
+				params += fmt.Sprintf("%s string", state.Name)
+				break
+			} else {
+				params += fmt.Sprintf("%s interface{}", state.Name)
+				break
+			}
+		}
+	}
+
 	// Определение templ компонента
 	sb.WriteString(fmt.Sprintf("templ %s(%s) {\n", funcName, params))
 
-	// Конвертируем JSX в templ
+	// Если JSX есть, используем его
 	if component.JSX != nil {
 		var jsxTemplate string
 		if g.jsxToHtml != nil {
 			jsxTemplate = g.jsxToHtml.ConvertJSXToTempl(component.JSX, 1)
 		} else {
-			// Если JSX конвертер не установлен, используем простую реализацию
 			jsxTemplate = g.simpleJSXToTempl(component, component.JSX, 1)
 		}
 		sb.WriteString(jsxTemplate)
+	} else if len(component.State) > 0 {
+		// Если JSX нет, но есть состояния, генерируем базовый компонент
+		indent := g.getIndentation(1)
+
+		// Внешний div с ID для HTMX (если используется)
+		if g.options.UseHtmx {
+			sb.WriteString(fmt.Sprintf("%s<div id=\"%s-{id}\">\n", indent, component.Name))
+		} else {
+			sb.WriteString(fmt.Sprintf("%s<div>\n", indent))
+		}
+
+		// Генерируем отображение для каждого состояния
+		for _, state := range component.State {
+			if state.Name == "count" {
+				// Заголовок счетчика
+				sb.WriteString(fmt.Sprintf("%s%s<h2>Счетчик: ", indent, indent))
+
+				if state.Type == "number" {
+					sb.WriteString("{ strconv.Itoa(count) }</h2>\n")
+				} else if state.Type == "string" {
+					sb.WriteString("{ count }</h2>\n")
+				} else {
+					sb.WriteString("{ fmt.Sprint(count) }</h2>\n")
+				}
+
+				// Кнопки
+				sb.WriteString(fmt.Sprintf("%s%s<div>\n", indent, indent))
+
+				// Кнопка уменьшения (-)
+				if g.options.UseHtmx {
+					sb.WriteString(fmt.Sprintf("%s%s%s<button hx-post=\"/api/%s/setCount?id={id}&value=-1\" "+
+						"hx-target=\"#%s-{id}\" hx-swap=\"outerHTML\">-</button>\n",
+						indent, indent, indent, strings.ToLower(component.Name), component.Name))
+				} else {
+					sb.WriteString(fmt.Sprintf("%s%s%s<button>-</button>\n", indent, indent, indent))
+				}
+
+				// Кнопка увеличения (+)
+				if g.options.UseHtmx {
+					sb.WriteString(fmt.Sprintf("%s%s%s<button hx-post=\"/api/%s/setCount?id={id}&value=1\" "+
+						"hx-target=\"#%s-{id}\" hx-swap=\"outerHTML\">+</button>\n",
+						indent, indent, indent, strings.ToLower(component.Name), component.Name))
+				} else {
+					sb.WriteString(fmt.Sprintf("%s%s%s<button>+</button>\n", indent, indent, indent))
+				}
+
+				sb.WriteString(fmt.Sprintf("%s%s</div>\n", indent, indent))
+			} else {
+				// Для других состояний - общий шаблон
+				sb.WriteString(fmt.Sprintf("%s%s<h3>%s: ", indent, indent, state.Name))
+
+				// Отображаем значение в зависимости от типа
+				if state.Type == "number" {
+					sb.WriteString(fmt.Sprintf("{ strconv.Itoa(%s) }</h3>\n", state.Name))
+				} else if state.Type == "string" {
+					sb.WriteString(fmt.Sprintf("{ %s }</h3>\n", state.Name))
+				} else {
+					sb.WriteString(fmt.Sprintf("{ fmt.Sprint(%s) }</h3>\n", state.Name))
+				}
+			}
+		}
+
+		// Закрываем внешний div
+		sb.WriteString(fmt.Sprintf("%s</div>\n", indent))
+	} else {
+		// Если ни JSX, ни состояний нет, просто добавляем заглушку
+		sb.WriteString(fmt.Sprintf("%s<div>Компонент без JSX</div>\n", g.getIndentation(1)))
 	}
 
 	sb.WriteString("}\n\n")
@@ -328,8 +423,8 @@ func (g *TemplGenerator) detectRequiredImports(component *models.ReactComponent)
 	// Всегда импортируем fmt для интерполяции строк и форматирования
 	imports["fmt"] = true
 
-	// Если используем HTMX, импортируем необходимые пакеты
-	if g.options.UseHtmx {
+	// Если используем HTMX или есть числовые состояния, импортируем strconv
+	if g.options.UseHtmx || hasNumericState(component) {
 		imports["strconv"] = true
 	}
 
@@ -346,6 +441,22 @@ func (g *TemplGenerator) detectRequiredImports(component *models.ReactComponent)
 	}
 
 	return result
+}
+
+// hasNumericState проверяет, есть ли в компоненте числовые состояния
+func hasNumericState(component *models.ReactComponent) bool {
+	for _, state := range component.State {
+		if state.Type == "number" {
+			return true
+		}
+		if state.InitialValue != nil {
+			_, isNumeric := state.InitialValue.(float64)
+			if isNumeric {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // detectImportsFromJSX проверяет JSX на необходимость дополнительных импортов

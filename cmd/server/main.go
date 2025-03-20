@@ -128,12 +128,13 @@ func handleConversion(reactParser parser.ReactParser) http.HandlerFunc {
 		}
 
 		// Получение параметров конвертации
-		useHtmx := r.FormValue("useHtmx") == "true"
+		//useHtmx := r.FormValue("useHtmx") == "true"
 		componentName := strings.TrimSuffix(header.Filename, ext)
 
 		// Создание опций для конвертера
 		options := config.NewDefaultOptions()
-		options.UseHtmx = useHtmx
+		//options.UseHtmx = useHtmx
+		options.UseHtmx = true
 		options.ComponentName = componentName
 		options.PackageName = "templates"
 		options.Debug = false
